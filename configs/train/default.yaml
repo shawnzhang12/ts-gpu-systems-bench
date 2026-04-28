@@ -1,0 +1,6 @@
+epochs: 3
+lr: 1.0e-3
+weight_decay: 1.0e-4
+clip_grad_norm: 1.0
+device: cuda
+amp: false

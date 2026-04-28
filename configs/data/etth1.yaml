@@ -1,0 +1,8 @@
+name: etth1
+path: data/ETTh1.csv
+download_if_missing: true
+lookback: 720
+horizon: 1
+target_col: OT
+batch_size: 32
+num_workers: 0

@@ -1,0 +1,2 @@
+mamba-ssm>=2.2
+flash-attn>=2.7

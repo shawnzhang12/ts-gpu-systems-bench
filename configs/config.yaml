@@ -1,0 +1,11 @@
+defaults:
+  - data: etth1
+  - preprocess: pytorch_eager
+  - model: mamba
+  - train: default
+  - logging: mlflow
+  - sweep: medium
+  - _self_
+
+seed: 42
+experiment_name: ts_gpu_systems_bench

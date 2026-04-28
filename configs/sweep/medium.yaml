@@ -1,0 +1,5 @@
+lookbacks: [96, 192, 336, 720, 1440, 2880]
+backends: [pytorch_eager, compile, triton, tilelang]
+models: [mamba, transformer]
+batch_sizes: [16, 32]
+max_trials: 24

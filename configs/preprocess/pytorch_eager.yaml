@@ -1,0 +1,3 @@
+backend: pytorch_eager
+window: ${data.lookback}
+eps: 1.0e-5

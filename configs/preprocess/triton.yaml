@@ -1,0 +1,3 @@
+backend: triton
+window: ${data.lookback}
+eps: 1.0e-5
