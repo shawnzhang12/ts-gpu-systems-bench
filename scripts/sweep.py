@@ -9,6 +9,7 @@ import mlflow
 import optuna
 from omegaconf import DictConfig, OmegaConf
 
+from src.data.etth1 import download_etth1, load_etth1, split_etth1
 from src.train.runner import train_once
 
 MODEL_CONFIGS = {
@@ -51,8 +52,21 @@ def main(cfg: DictConfig) -> None:
     mlflow.set_tracking_uri(str(cfg.logging.tracking_uri))
     mlflow.set_experiment(str(cfg.experiment_name))
 
+    if cfg.data.download_if_missing:
+        download_etth1(cfg.data.path)
+    frame = load_etth1(cfg.data.path)
+    split = split_etth1(frame)
+    max_lookback = min(len(split.train), len(split.val), len(split.test)) - int(cfg.data.horizon)
+    requested_lookbacks = [int(v) for v in cfg.sweep.lookbacks]
+    valid_lookbacks = [lb for lb in requested_lookbacks if lb <= max_lookback]
+    dropped_lookbacks = [lb for lb in requested_lookbacks if lb > max_lookback]
+    if not valid_lookbacks:
+        raise ValueError(
+            f"no valid lookbacks in sweep; requested={requested_lookbacks}, max_valid={max_lookback}"
+        )
+
     search_space = {
-        "lookback": [int(v) for v in cfg.sweep.lookbacks],
+        "lookback": valid_lookbacks,
         "backend": [str(v) for v in cfg.sweep.backends],
         "model": [str(v) for v in cfg.sweep.models],
         "batch_size": [int(v) for v in cfg.sweep.batch_sizes],
@@ -63,6 +77,9 @@ def main(cfg: DictConfig) -> None:
 
     with mlflow.start_run(run_name=str(cfg.logging.run_name) if cfg.logging.run_name else "sweep") as parent_run:
         mlflow.log_dict(search_space, "sweep_space.json")
+        mlflow.log_param("max_valid_lookback", int(max_lookback))
+        if dropped_lookbacks:
+            mlflow.log_dict({"dropped_lookbacks": dropped_lookbacks}, "dropped_lookbacks.json")
 
         def objective(trial: optuna.Trial) -> float:
             lookback = trial.suggest_categorical("lookback", search_space["lookback"])
@@ -79,8 +96,19 @@ def main(cfg: DictConfig) -> None:
             )
 
             run_name = f"{backend}_{model_type}_L{lookback}_B{batch_size}"
-            with mlflow.start_run(run_name=run_name, nested=True):
-                metrics = train_once(trial_cfg, nested=True, run_name=run_name)
+            trial.set_user_attr("backend", backend)
+            trial.set_user_attr("model", model_type)
+            trial.set_user_attr("lookback", lookback)
+            trial.set_user_attr("batch_size", batch_size)
+
+            try:
+                with mlflow.start_run(run_name=run_name, nested=True):
+                    metrics = train_once(trial_cfg, nested=True, run_name=run_name)
+            except Exception as exc:
+                trial.set_user_attr("fit_in_vram", 0.0)
+                trial.set_user_attr("val_mse", math.inf)
+                trial.set_user_attr("error", str(exc))
+                return 1.0e12
 
             fit = float(metrics.get("fit_in_vram", 0.0))
             val_mse = float(metrics.get("val_mse", math.inf))
@@ -88,10 +116,6 @@ def main(cfg: DictConfig) -> None:
 
             trial.set_user_attr("fit_in_vram", fit)
             trial.set_user_attr("val_mse", val_mse)
-            trial.set_user_attr("backend", backend)
-            trial.set_user_attr("model", model_type)
-            trial.set_user_attr("lookback", lookback)
-            trial.set_user_attr("batch_size", batch_size)
 
             return objective_value
 

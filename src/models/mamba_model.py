@@ -19,6 +19,18 @@ class _FallbackMambaBlock(nn.Module):
         return out
 
 
+class _AdaptiveMambaBlock(nn.Module):
+    def __init__(self, d_model: int, d_state: int, d_conv: int, expand: int) -> None:
+        super().__init__()
+        self.mamba = _Mamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand) if _Mamba is not None else None
+        self.fallback = _FallbackMambaBlock(d_model=d_model)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.mamba is not None and x.is_cuda:
+            return self.mamba(x)
+        return self.fallback(x)
+
+
 class MambaForecaster(nn.Module):
     def __init__(
         self,
@@ -34,10 +46,7 @@ class MambaForecaster(nn.Module):
 
         blocks: list[nn.Module] = []
         for _ in range(n_layers):
-            if _Mamba is not None:
-                blocks.append(_Mamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand))
-            else:
-                blocks.append(_FallbackMambaBlock(d_model=d_model))
+            blocks.append(_AdaptiveMambaBlock(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand))
         self.blocks = nn.ModuleList(blocks)
 
         self.norm = nn.LayerNorm(d_model)
