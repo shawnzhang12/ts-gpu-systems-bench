@@ -141,11 +141,7 @@ Artifacts:
 
 ### MLflow Screenshots
 
-![MLflow experiment runs](results/screenshots/mlflow_experiment_runs.png)
-
 ![MLflow best run detail](results/screenshots/mlflow_best_run_detail.png)
-
-![MLflow parent sweep detail](results/screenshots/mlflow_parent_sweep_detail.png)
 
 ### Next steps
 
