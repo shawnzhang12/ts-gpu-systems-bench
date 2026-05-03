@@ -158,63 +158,44 @@ python scripts/sweep.py data=electricity train=realworld sweep=realworld
 - Stress table: `reports/traffic_stress_sweep_2026-05-02_table.md`
 - Coverage table: `reports/traffic_coverage_sweep_2026-05-02_table.md`
 
-## Latest Sweep Summary (2026-04-29 UTC)
+## Latest Sweep Summary (2026-05-02 UTC)
 
-This section summarizes the latest full sweep executed on `RTX 5080` in the `ml-box` distrobox container.
+Latest large-dataset runs were executed on `data=traffic` (17,544 rows, 862 features) to stress long-context forecasting.
 
-- Sweep parent run id: `a7de8f1cee76457fae42fad776e995a5`
-- Trials: `24/24` finished
-- Invalid/NA metrics: `0` for `val_mse`, `test_mse`, and `peak_mem_mb`
-- Best run by `val_mse`: `triton + mamba + L720 + B32`
-- Best run metrics:
-  - `val_mse=11.3492`
-  - `test_mse=42.1133`
-  - `train_sps=10,660.3`
-  - `test_sps=29,088.8`
-  - `infer_ms/sample=0.0344`
-  - `peak_mem_mb=261.3`
+- Stress sweep parent run id: `56a14e2a39d34ffd9a68e4fe8d5fc711`
+- Coverage sweep parent run id: `7758f59043f94aada0a1fee559c26425`
+- Consolidated report: `reports/traffic_sweeps_2026-05-02.md`
+- Stress sweep table: `reports/traffic_stress_sweep_2026-05-02_table.md`
+- Coverage sweep table: `reports/traffic_coverage_sweep_2026-05-02_table.md`
 
-Artifacts:
+### Key outcomes
 
-- Full staff metrics table: `results/sweep_a7de8f1cee76457fae42fad776e995a5_staff_metrics.md`
-- Top-10 table export: `results/sweep_a7de8f1cee76457fae42fad776e995a5_top10.md`
-- Backend aggregate table export: `results/sweep_a7de8f1cee76457fae42fad776e995a5_backend_summary.md`
+1. Best stress config: `tilelang + mamba_large + L720 + B8` with `val_mse=0.000940`.
+2. Best coverage config: `triton + mamba + L192 + B8` with `val_mse=0.000538`.
+3. At matched stress settings (`mamba_large, L720, B8`), TileLang preprocessing outperformed Triton:
+   - `pre_latency_mean_ms`: `1.183` vs `4.218`
+   - `pre_eff_bw_gbps`: `12121` vs `3399`
+   - `infer_latency_p50_ms`: `10.02` vs `13.03`
+4. `transformer_large` did not fit this 16GB-class GPU in the stress profile, while `mamba_large` reached `L=720`.
+5. AMP caused instability in one coverage attempt; `amp=false` restored successful runs and should be the default for this traffic profile.
 
-### Top 10 Configurations (tabulate)
+### Conclusions
 
-| backend       | model       |   L |   B | val_mse     |   test_mse | train_step_s   | train_sps    | test_sps     | infer_ms/sample   | infer_ms/batch   |   peak_mem_mb | wall_s   |
-|---------------|-------------|-----|-----|-------------|------------|----------------|--------------|--------------|-------------------|------------------|---------------|----------|
-| triton        | mamba       | 720 |  32 | **11.3492** |    42.1133 | 0.003002       | 10,660.3     | 29,088.8     | 0.0344            | 1.0204           |         261.3 | 2.75     |
-| tilelang      | mamba       | 720 |  16 | 15.5948     |    34.5924 | 0.003795       | 4,216.1      | 5,824.6      | 0.1717            | 2.6918           |         685.1 | 7.42     |
-| pytorch_eager | transformer | 192 |  16 | 15.7595     |    66.9888 | 0.001627       | 9,833.1      | 35,667.2     | 0.0280            | 0.4344           |          80.1 | 3.11     |
-| compile       | mamba       | 720 |  16 | 16.1496     |    33.5527 | 0.001780       | 8,988.4      | 12,345.3     | 0.0810            | 0.6248           |         139.9 | 3.49     |
-| triton        | mamba       | 720 |  16 | 16.6052     |    38.482  | 0.001726       | 9,271.9      | 25,740.5     | 0.0388            | 0.5755           |         139.9 | 3.17     |
-| tilelang      | mamba       | 192 |  32 | 17.7329     |    56.0813 | **0.001416**   | **22,605.8** | 60,255.0     | 0.0166            | 0.4908           |         114.1 | 1.53     |
-| triton        | mamba       | 192 |  32 | 17.7527     |    54.862  | 0.001447       | 22,119.1     | **78,639.7** | **0.0127**        | **0.3774**       |          83.5 | **1.48** |
-| tilelang      | mamba       | 336 |  32 | 18.7249     |    74.015  | 0.002484       | 12,882.1     | 22,148.7     | 0.0451            | 1.3821           |         309.9 | 2.59     |
-| pytorch_eager | transformer |  96 |  32 | 21.3038     |    70.7354 | 0.001549       | 20,660.3     | 70,308.5     | 0.0142            | 0.4378           |          56.9 | 1.58     |
-| triton        | transformer | 336 |  16 | 22.6521     |    46.135  | 0.001738       | 9,207.0      | 26,847.8     | 0.0372            | 0.5611           |         184.3 | 3.35     |
+1. Faster fused preprocessing is materially improving end-to-end throughput/latency on high-dimensional data.
+2. On this hardware budget, model architecture (Mamba vs large Transformer) is currently the main long-context limiter.
+3. Cold-start/JIT overhead is significant for some TileLang paths, so warm-run and cold-run metrics should be tracked separately.
 
-### Backend Aggregate (tabulate)
+### Forward Plan
 
-| backend       |   trials |   best_val_mse |   med_val_mse |   med_train_sps |   med_test_sps |   med_peak_mem_mb |   med_infer_ms_per_sample |   med_wall_time_s |
-|---------------|----------|----------------|---------------|-----------------|----------------|-------------------|---------------------------|-------------------|
-| triton        |        7 |        11.3492 |       22.6521 |          9207   |        25740.5 |             261.3 |                    0.0388 |              3.35 |
-| tilelang      |        5 |        15.5948 |       18.7249 |         12882.1 |        22148.7 |             309.9 |                    0.0451 |              2.59 |
-| pytorch_eager |        7 |        15.7595 |       29.2589 |          9833.1 |        22228.5 |             309.9 |                    0.045  |              3.11 |
-| compile       |        5 |        16.1496 |       23.018  |          8988.4 |        12345.3 |             139.9 |                    0.081  |              4.32 |
+See [`NEXT_STEPS.md`](NEXT_STEPS.md) for prioritized execution steps and exact commands.
 
-### MLflow Screenshots
+## Historical Sweep Summary (2026-04-29 UTC)
 
-![MLflow best run detail](results/screenshots/mlflow_best_run_detail.png)
+Older ETTh1-focused sweep artifacts are kept for reference:
 
-### Next steps
-
-1. Run the full GPU sweep with the upgraded metrics table to produce a direct Triton vs TileLang frontier on your RTX 5080.
-2. Add end-to-end train/infer energy metrics (e.g., board power sampling + joules per sample) for a fuller systems story.
-3. Export the MLflow-derived sweep table and plots automatically from `notebooks/analysis.ipynb` for one-command reporting.
-4. Expand lookback schedules by model/backend-specific VRAM probes to better map the fit frontier.
-5. Add per-feature normalization error stats in the training path for backend numerical drift checks.
+- Parent run id: `a7de8f1cee76457fae42fad776e995a5`
+- Full table: `results/sweep_a7de8f1cee76457fae42fad776e995a5_staff_metrics.md`
+- Backend summary: `results/sweep_a7de8f1cee76457fae42fad776e995a5_backend_summary.md`
 
 ## Key CLI override examples
 
