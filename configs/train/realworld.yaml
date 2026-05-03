@@ -1,0 +1,10 @@
+epochs: 30
+lr: 5.0e-4
+weight_decay: 1.0e-4
+clip_grad_norm: 1.0
+device: cuda
+amp: true
+grad_accum_steps: 4
+auto_batch_backoff: true
+min_batch_size: 2
+max_batch_retries: 6

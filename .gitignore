@@ -14,5 +14,15 @@ artifacts/
 results/*.png
 results/*.csv
 results/*.json
+results/sweep_*_table.md
+results/sweep_*_commentary.md
 results/traces/*.json
 data/ETTh1.csv
+data/*.csv
+data/*.txt
+data/*.txt.gz
+data/*.zip
+data/cache/
+data/cache_xl/
+.tilelang_cache/
+outputs/

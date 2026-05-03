@@ -1,6 +1,6 @@
-name: etth1
-dataset: etth1
-path: data/ETTh1.csv
+name: etth2
+dataset: etth2
+path: data/ETTh2.csv
 download_if_missing: true
 lookback: 720
 horizon: 1

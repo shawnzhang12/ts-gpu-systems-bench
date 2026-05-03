@@ -1,0 +1,5 @@
+lookbacks: [192, 336, 720, 960, 1440, 2016, 4096, 8192]
+backends: [triton, tilelang]
+models: [mamba_large, transformer_large]
+batch_sizes: [8, 16, 32]
+max_trials: 60

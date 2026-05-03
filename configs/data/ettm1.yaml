@@ -1,8 +1,8 @@
-name: etth1
-dataset: etth1
-path: data/ETTh1.csv
+name: ettm1
+dataset: ettm1
+path: data/ETTm1.csv
 download_if_missing: true
-lookback: 720
+lookback: 1440
 horizon: 1
 target_col: OT
 batch_size: 32

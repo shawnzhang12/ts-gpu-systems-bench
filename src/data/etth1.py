@@ -1,12 +1,21 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 import pandas as pd
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
+
+from .benchmarks import (
+    SplitFrames,
+    TimeSeriesWindowDataset,
+    build_dataloaders as _build_dataloaders,
+    download_dataset,
+    expand_dataset,
+    load_dataset,
+    split_dataset,
+)
 
 ETTH1_URL = "https://raw.githubusercontent.com/zhouhaoyi/ETDataset/main/ETT-small/ETTh1.csv"
 ETTH1_COLUMNS = ["date", "HUFL", "HULL", "MUFL", "MULL", "LUFL", "LULL", "OT"]
@@ -14,94 +23,40 @@ STANDARD_TRAIN_END = 12 * 30 * 24
 STANDARD_VAL_END = 16 * 30 * 24
 STANDARD_TEST_END = 20 * 30 * 24
 
-
-@dataclass
-class SplitFrames:
-    train: pd.DataFrame
-    val: pd.DataFrame
-    test: pd.DataFrame
+# Backward-compatibility alias
+ETTh1WindowDataset = TimeSeriesWindowDataset
 
 
 def download_etth1(path: str | Path = "data/ETTh1.csv", force: bool = False) -> Path:
-    out = Path(path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    if out.exists() and not force:
-        return out
-
-    df = pd.read_csv(ETTH1_URL)
-    df.to_csv(out, index=False)
-    return out
+    return download_dataset("etth1", path=path, force=force)
 
 
 def load_etth1(path: str | Path = "data/ETTh1.csv") -> pd.DataFrame:
-    df = pd.read_csv(path)
+    df = load_dataset(path=path, name="etth1")
     missing = [c for c in ETTH1_COLUMNS if c not in df.columns]
     if missing:
         raise ValueError(f"ETTh1 columns missing: {missing}")
     return df
 
 
-def split_etth1(df: pd.DataFrame) -> SplitFrames:
-    if len(df) >= STANDARD_TEST_END:
-        train = df.iloc[:STANDARD_TRAIN_END].reset_index(drop=True)
-        val = df.iloc[STANDARD_TRAIN_END:STANDARD_VAL_END].reset_index(drop=True)
-        test = df.iloc[STANDARD_VAL_END:STANDARD_TEST_END].reset_index(drop=True)
-        return SplitFrames(train=train, val=val, test=test)
+def expand_etth1(
+    df: pd.DataFrame,
+    repeat_factor: int = 1,
+    drift_per_repeat: float = 0.0,
+    noise_std: float = 0.0,
+    seed: int = 42,
+) -> pd.DataFrame:
+    return expand_dataset(
+        df=df,
+        repeat_factor=repeat_factor,
+        drift_per_repeat=drift_per_repeat,
+        noise_std=noise_std,
+        seed=seed,
+    )
 
-    train_end = int(0.7 * len(df))
-    val_end = int(0.85 * len(df))
-    train = df.iloc[:train_end].reset_index(drop=True)
-    val = df.iloc[train_end:val_end].reset_index(drop=True)
-    test = df.iloc[val_end:].reset_index(drop=True)
-    return SplitFrames(train=train, val=val, test=test)
 
-
-class ETTh1WindowDataset(Dataset):
-    def __init__(
-        self,
-        frame: pd.DataFrame,
-        lookback: int,
-        horizon: int = 1,
-        target_col: str = "OT",
-        features: list[str] | None = None,
-    ) -> None:
-        if lookback < 1:
-            raise ValueError("lookback must be >= 1")
-        if horizon < 1:
-            raise ValueError("horizon must be >= 1")
-
-        self.lookback = lookback
-        self.horizon = horizon
-
-        if features is None:
-            features = [c for c in frame.columns if c != "date"]
-
-        if target_col not in features:
-            raise ValueError(f"target_col '{target_col}' must be in features")
-
-        self.features = features
-        self.target_col = target_col
-        self.target_idx = self.features.index(target_col)
-
-        values = torch.tensor(frame[self.features].values, dtype=torch.float32)
-        n = values.shape[0] - lookback - horizon + 1
-        if n <= 0:
-            raise ValueError(
-                f"insufficient rows={values.shape[0]} for lookback={lookback}, horizon={horizon}"
-            )
-        self.values = values
-        self.num_windows = n
-
-    def __len__(self) -> int:
-        return self.num_windows
-
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
-        start = idx
-        end = idx + self.lookback
-        x = self.values[start:end]
-        y_index = end + self.horizon - 1
-        y = self.values[y_index, self.target_idx]
-        return x, y
+def split_etth1(df: pd.DataFrame, split_mode: str = "standard") -> SplitFrames:
+    return split_dataset(df=df, name="etth1", split_mode=split_mode)
 
 
 def build_dataloaders(
@@ -111,17 +66,25 @@ def build_dataloaders(
     horizon: int = 1,
     target_col: str = "OT",
     num_workers: int = 0,
+    storage: Literal["torch", "numpy", "memmap"] = "torch",
+    cache_dir: str | Path = "data/cache",
+    pin_memory: bool = False,
+    persistent_workers: bool = False,
+    prefetch_factor: int = 2,
 ) -> tuple[DataLoader, DataLoader, DataLoader, int]:
-    train_ds = ETTh1WindowDataset(split.train, lookback=lookback, horizon=horizon, target_col=target_col)
-    val_ds = ETTh1WindowDataset(split.val, lookback=lookback, horizon=horizon, target_col=target_col)
-    test_ds = ETTh1WindowDataset(split.test, lookback=lookback, horizon=horizon, target_col=target_col)
-
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, drop_last=True)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
-    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
-
-    in_features = len(train_ds.features)
-    return train_loader, val_loader, test_loader, in_features
+    return _build_dataloaders(
+        split=split,
+        lookback=lookback,
+        batch_size=batch_size,
+        horizon=horizon,
+        target_col=target_col,
+        num_workers=num_workers,
+        storage=storage,
+        cache_dir=cache_dir,
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers,
+        prefetch_factor=prefetch_factor,
+    )
 
 
 def get_split_frame(split: SplitFrames, partition: Literal["train", "val", "test"]) -> pd.DataFrame:
@@ -132,3 +95,4 @@ def get_split_frame(split: SplitFrames, partition: Literal["train", "val", "test
     if partition == "test":
         return split.test
     raise ValueError(f"unknown partition: {partition}")
+

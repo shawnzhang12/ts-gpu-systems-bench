@@ -13,7 +13,7 @@ class TimingResult:
     p95_ms: float
 
 
-def _quantile(values: list[float], q: float) -> float:
+def quantile(values: list[float], q: float) -> float:
     if not values:
         return 0.0
     sorted_vals = sorted(values)
@@ -40,8 +40,8 @@ def benchmark_callable(fn, warmup: int = 5, iters: int = 30) -> TimingResult:
 
     return TimingResult(
         mean_ms=sum(timings) / max(len(timings), 1),
-        p50_ms=_quantile(timings, 0.5),
-        p95_ms=_quantile(timings, 0.95),
+        p50_ms=quantile(timings, 0.5),
+        p95_ms=quantile(timings, 0.95),
     )
 
 

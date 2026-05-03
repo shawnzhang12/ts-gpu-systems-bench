@@ -2,27 +2,41 @@
 
 End-to-end benchmark for the claim:
 
-> Faster causal rolling z-score preprocessing enables longer lookback windows, which improves ETTh1 forecasting metrics.
+> Faster causal rolling z-score preprocessing enables longer lookback windows, which improves long-context forecasting metrics.
 
-The project compares preprocessing backends (`pytorch_eager`, `compile`, `triton`, `tilelang`) and forecasting models (`mamba`, `transformer`) on ETTh1.
+The project compares preprocessing backends (`pytorch_eager`, `compile`, `triton`, `tilelang`) and forecasting models (`mamba`, `transformer`) across multiple time-series benchmarks.
 
 ## What this repository includes
 
-- ETTh1 data pipeline with canonical long-sequence split logic.
+- Multi-dataset pipeline with canonical long-sequence split logic:
+  - ETT: `etth1`, `etth2`, `ettm1`, `ettm2`
+  - Jena Climate: `jena_climate`
+  - UCI Electricity Load Diagrams: `electricity_uci`
+  - LTSF high-dimensional stress set:
+    - `traffic_ltsf` (862 channels, hourly)
+    - `electricity_ltsf` (321 channels, hourly)
+    - `solar_ltsf` (137 channels, 10-min)
+    - `exchange_rate_ltsf` (8 channels, daily)
+- Configurable ETTh1 scaling (`repeat_factor`, drift/noise injection) for large-row experiments.
+- Storage modes for window datasets (`torch`, `numpy`, `memmap`) to mimic larger production pipelines.
 - Causal rolling z-score preprocessing with shared backend interface.
 - Backends:
   - `pytorch_eager`: unfold + reduction baseline.
   - `compile`: `torch.compile`-wrapped baseline.
   - `triton`: fused Triton kernel with in-kernel online variance update.
-  - `tilelang`: scaffolded backend hook (runtime-gated, falls back to reference path after availability check).
+  - `tilelang`: fused TileLang kernel with shared-memory staging for causal rolling z-score.
 - Two forecasting models:
   - `MambaForecaster` (uses `mamba-ssm` when available, RNN fallback otherwise).
-  - `FlashTransformerForecaster` (uses FlashAttention modules when available, `nn.MultiheadAttention` fallback otherwise).
+  - `FlashTransformerForecaster` (uses FlashAttention module or functional API when available, `nn.MultiheadAttention` fallback otherwise).
 - Hydra config composition, MLflow tracking, Optuna grid sweeps, and profiler trace export.
+- Constraint handling for real-world runs:
+  - automatic batch-size backoff on OOM
+  - AMP-to-FP32 precision fallback on non-finite loss
+  - gradient accumulation for effective large batches
 
 ## Repo structure
 
-- `src/data`: ETTh1 download/loading/splitting/window datasets.
+- `src/data`: dataset specs, download/loading/splitting/window datasets.
 - `src/preprocess`: backend registry and kernel implementations.
 - `src/models`: Mamba and Transformer forecasters.
 - `src/train`: training engine, profiler helper, and reusable training runner.
@@ -34,21 +48,41 @@ The project compares preprocessing backends (`pytorch_eager`, `compile`, `triton
 ## Environment setup
 
 ```bash
-uv sync --all-extras --python 3.12
+uv sync --extra models --extra tilelang --python 3.12
 ```
 
 Use `pyproject.toml` + `uv.lock` as the source of truth. `requirements.txt` files are legacy convenience snapshots.
 
-### System-level prerequisites
-
-- NVIDIA driver with CUDA runtime support (this repo was validated on RTX 5080 + CUDA 13.x).
-- CUDA toolkit with `nvcc` available (needed when `flash-attn` builds from source).
-- Linux build toolchain (`gcc`, `g++`, `ninja`).
-
-If `flash-attn` needs a source build:
+Validate the runtime stack:
 
 ```bash
-CUDA_HOME=/usr/local/cuda MAX_JOBS=1 uv pip install --python .venv/bin/python flash-attn --no-build-isolation -v
+uv run python scripts/check_runtime.py
+uv run python scripts/check_runtime.py --require-cuda
+```
+
+`pyproject.toml` pins `torch`/`triton` to a tested-compatible range for the Mamba + Triton + TileLang stack.
+Current default pin targets CUDA 13.x PyTorch wheels (`torch 2.11`, `cu130`).
+The `models` extra also includes `nvidia-cuda-runtime-cu12` as a compatibility shim for current `mamba-ssm` binary linkage.
+
+### System-level prerequisites
+
+- NVIDIA driver with CUDA runtime support (this repo was validated on RTX 5080 + CUDA 13.x / toolkit 13.2).
+- CUDA toolkit with `nvcc` available only if you install `flash-attn` from source.
+- Linux build toolchain (`gcc`, `g++`, `ninja`).
+
+Optional `flash-attn` install (kept separate because it is the most fragile dependency):
+
+```bash
+bash scripts/install_flash_attn.sh
+```
+
+`scripts/install_flash_attn.sh` enforces CUDA major-version parity (`13.x` with `13.x`) between `nvcc` and `torch.version.cuda`.
+Minor mismatches (for example `torch=13.0` and `nvcc=13.2`) are allowed with a warning.
+
+Optional CUDA-13-first path (FlashAttention-4 pre-release):
+
+```bash
+uv pip install --python .venv/bin/python --pre "flash-attn-4[cu13]"
 ```
 
 ### Distrobox note
@@ -69,10 +103,20 @@ uv add -r requirements-tilelang.txt
 
 ## Quick start
 
-Download ETTh1:
+Download the default dataset from active Hydra config:
 
 ```bash
 python scripts/download_data.py
+```
+
+Select a larger dataset:
+
+```bash
+python scripts/download_data.py data=ettm1
+python scripts/download_data.py data=jena_climate
+python scripts/download_data.py data=electricity_uci
+python scripts/download_data.py data=traffic
+python scripts/download_data.py data=electricity
 ```
 
 Run preprocessing benchmark:
@@ -92,6 +136,27 @@ Run medium Optuna/Hydra sweep (nested MLflow runs):
 ```bash
 python scripts/sweep.py
 ```
+
+Run real-world profile (larger data + larger models + longer contexts):
+
+```bash
+python scripts/sweep.py data=etth1_xl train=realworld sweep=realworld
+```
+
+Run high-dimensional stress tests (FlashAttention/Mamba pressure):
+
+```bash
+python scripts/sweep.py data=traffic train=realworld sweep=realworld
+python scripts/sweep.py data=electricity train=realworld sweep=realworld
+```
+
+## Latest Traffic Sweeps (2026-05-02 UTC)
+
+- Stress sweep parent run: `56a14e2a39d34ffd9a68e4fe8d5fc711`
+- Coverage sweep parent run: `7758f59043f94aada0a1fee559c26425`
+- Report: `reports/traffic_sweeps_2026-05-02.md`
+- Stress table: `reports/traffic_stress_sweep_2026-05-02_table.md`
+- Coverage table: `reports/traffic_coverage_sweep_2026-05-02_table.md`
 
 ## Latest Sweep Summary (2026-04-29 UTC)
 
@@ -145,11 +210,11 @@ Artifacts:
 
 ### Next steps
 
-1. Implement the true TileLang fused rolling z-score kernel (replace placeholder path) and rerun the same sweep for a direct Triton vs TileLang kernel comparison.
-2. Add explicit preprocessing metrics (`pre_latency_mean_ms`, `pre_eff_bw_gbps`, `pre_peak_mem_mb`) into the same sweep table for end-to-end kernel impact visibility.
-3. Add inference percentile latency (`p50/p95`) and cold-start timing (compile + first batch) as first-class logged metrics.
-4. Add automated plot generation from MLflow runs into `notebooks/analysis.ipynb` outputs for repeatable report exports.
-5. Expand lookback schedules by model/backend-specific validity and VRAM probes to improve frontier mapping without manual retries.
+1. Run the full GPU sweep with the upgraded metrics table to produce a direct Triton vs TileLang frontier on your RTX 5080.
+2. Add end-to-end train/infer energy metrics (e.g., board power sampling + joules per sample) for a fuller systems story.
+3. Export the MLflow-derived sweep table and plots automatically from `notebooks/analysis.ipynb` for one-command reporting.
+4. Expand lookback schedules by model/backend-specific VRAM probes to better map the fit frontier.
+5. Add per-feature normalization error stats in the training path for backend numerical drift checks.
 
 ## Key CLI override examples
 
@@ -173,8 +238,13 @@ python scripts/train.py data.lookback=2880 data.batch_size=16 preprocess=triton 
   - `pre_mae_vs_eager`, `pre_max_abs_vs_eager`
 - Training:
   - `train_loss`, `val_mse`, `test_mse`
-  - `train_step_time_s`, `val_step_time_s`
+  - `train_step_time_s`, `train_step_p50_ms`, `train_step_p95_ms`
+  - `val_step_time_s`, `val_step_p50_ms`, `val_step_p95_ms`
+  - `infer_step_time_s`, `infer_latency_p50_ms`, `infer_latency_p95_ms`
+  - `cold_start_ms` (compile + first batch)
   - `train_samples_per_s`, `test_samples_per_s`
+  - `train_tokens_per_s`, `val_tokens_per_s`, `infer_tokens_per_s`
+  - `effective_batch_size`, `fit_retries`, `batch_backoff_success`, `precision_backoff_success`
   - `peak_memory_mb`
   - `fit_in_vram`
 
@@ -182,9 +252,9 @@ Profiler traces are exported to `results/traces/` and logged as artifacts.
 
 ## TileLang status in this implementation
 
-The TileLang backend is scaffolded with runtime availability checks and full benchmark/training wiring. The execution path is intentionally a reference implementation placeholder until the full fused TileLang kernel is integrated.
+The TileLang backend now executes a fused rolling z-score kernel (causal window mean/variance + normalization in a single kernel launch) with shared-memory staging for the block window and left halo.
 
-This keeps the experiment interface stable while allowing Triton/PyTorch backend execution immediately.
+Runtime checks still guard availability (package/CUDA), but execution no longer falls back to eager preprocessing.
 
 ## Analysis notebook
 

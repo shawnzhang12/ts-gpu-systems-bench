@@ -8,7 +8,14 @@ import mlflow
 import torch
 from omegaconf import DictConfig
 
-from src.data.etth1 import build_dataloaders, download_etth1, load_etth1, split_etth1
+from src.data.benchmarks import (
+    build_dataloaders,
+    dataset_default_target,
+    download_dataset,
+    expand_dataset,
+    load_dataset,
+    split_dataset,
+)
 from src.preprocess.pytorch_backend import causal_rolling_zscore_eager
 from src.preprocess.registry import BackendUnavailable, available_backends, get_preprocess_backend
 from src.train.profiler import export_preprocess_trace
@@ -26,19 +33,33 @@ def _pick_device(requested: str) -> torch.device:
 @hydra.main(version_base=None, config_path="../configs", config_name="config")
 def main(cfg: DictConfig) -> None:
     seed_everything(int(cfg.seed))
+    dataset_name = str(getattr(cfg.data, "dataset", cfg.data.name))
+    target_col = str(getattr(cfg.data, "target_col", dataset_default_target(dataset_name)))
 
     if cfg.data.download_if_missing:
-        download_etth1(cfg.data.path)
+        download_dataset(dataset_name, cfg.data.path)
 
-    frame = load_etth1(cfg.data.path)
-    split = split_etth1(frame)
+    frame = load_dataset(cfg.data.path, dataset_name)
+    frame = expand_dataset(
+        frame,
+        repeat_factor=int(cfg.data.repeat_factor),
+        drift_per_repeat=float(cfg.data.drift_per_repeat),
+        noise_std=float(cfg.data.noise_std),
+        seed=int(cfg.seed),
+    )
+    split = split_dataset(frame, dataset_name, split_mode=str(cfg.data.split_mode))
     train_loader, _, _, _ = build_dataloaders(
         split,
         lookback=int(cfg.data.lookback),
         batch_size=int(cfg.data.batch_size),
         horizon=int(cfg.data.horizon),
-        target_col=str(cfg.data.target_col),
+        target_col=target_col,
         num_workers=int(cfg.data.num_workers),
+        storage=str(cfg.data.storage),
+        cache_dir=str(cfg.data.cache_dir),
+        pin_memory=bool(cfg.data.pin_memory),
+        persistent_workers=bool(cfg.data.persistent_workers),
+        prefetch_factor=int(cfg.data.prefetch_factor),
     )
 
     x, _ = next(iter(train_loader))
