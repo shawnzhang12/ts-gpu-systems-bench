@@ -179,6 +179,31 @@ Latest large-dataset runs were executed on `data=traffic` (17,544 rows, 862 feat
 4. `transformer_large` did not fit this 16GB-class GPU in the stress profile, while `mamba_large` reached `L=720`.
 5. AMP caused instability in one coverage attempt; `amp=false` restored successful runs and should be the default for this traffic profile.
 
+### Results Table (tabulate)
+
+Representative rows across methods, datasets, and runtime profiles. Table generated with `tabulate`.
+
+| dataset      | profile    | backend       | model       | L   | B   | val_mse   | test_mse   | pre_ms   | pre_bw_gbps   | infer_ms_batch   | train_sps   | test_sps   | peak_mem_mb   |
+|--------------|------------|---------------|-------------|-----|-----|-----------|------------|----------|---------------|------------------|-------------|------------|---------------|
+| traffic_ltsf | stress     | tilelang      | mamba_large | 720 | 8   | 0.0009    | 0.0062     | 1.1830   | 12121.0800    | 10.0190          | 229.7000    | 801.4000   | 599.2000      |
+| traffic_ltsf | stress     | triton        | mamba_large | 720 | 8   | 0.0009    | 0.0062     | 4.2180   | 3399.4100     | 13.0350          | 200.2000    | 608.5000   | 599.9000      |
+| traffic_ltsf | coverage   | triton        | mamba       | 192 | 8   | 0.0005    | 0.0011     | 0.3200   | 3211.4400     | 0.6770           | 4799.9000   | 11565.8000 | 45.5000       |
+| traffic_ltsf | coverage   | triton        | transformer | 96  | 8   | 0.0008    | 0.0023     | 0.0990   | 2621.0700     | 0.4830           | 4298.5000   | 16060.1000 | 31.5000       |
+| traffic_ltsf | coverage   | tilelang      | transformer | 96  | 4   | 0.0010    | 0.0013     | 0.0300   | 4378.2900     | 0.4440           | 2228.8000   | 8611.7000  | 25.5000       |
+| etth1        | historical | triton        | mamba       | 720 | 32  | 11.3492   | 42.1133    | NA       | NA            | 1.0204           | 10660.3000  | 29088.8000 | 261.3000      |
+| etth1        | historical | tilelang      | mamba       | 720 | 16  | 15.5948   | 34.5924    | NA       | NA            | 2.6918           | 4216.1000   | 5824.6000  | 685.1000      |
+| etth1        | historical | pytorch_eager | transformer | 192 | 16  | 15.7595   | 66.9888    | NA       | NA            | 0.4344           | 9833.1000   | 35667.2000 | 80.1000       |
+
+Metric notes:
+- `pre_ms` and `pre_bw_gbps` are preprocessing kernel metrics and are only available in runs that logged preprocessing benchmarks.
+- `infer_ms_batch` is median inference latency per batch (`infer_latency_p50_ms`).
+- `train_sps` and `test_sps` are throughput in samples/sec.
+
+Short summary:
+- On `traffic_ltsf` stress runs, TileLang and Triton reached similar accuracy at `L=720`, with TileLang showing faster preprocessing and better effective bandwidth in matched Mamba-large configs.
+- On fit-friendly coverage runs, `triton + mamba (L=192, B=8)` gave the best validation error, while Transformer variants delivered very high inference throughput at shorter contexts.
+- On this 16GB-class setup, larger Transformer configs remain the main fit bottleneck at long lookbacks.
+
 ### Conclusions
 
 1. Faster fused preprocessing is materially improving end-to-end throughput/latency on high-dimensional data.
